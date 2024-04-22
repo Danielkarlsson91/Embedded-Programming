@@ -45,29 +45,32 @@ public:
         static_assert(SIZE > 3, "SIZE shall be at least 4"); // Ensure SIZE is at least 4
     }
 
-    // Push operation to add an item to the stack
     void push(const T &item)
     {
-        std::unique_lock lock(mtx);
-        cv.wait(lock, [this]
-                { return !this->isfull(); }); // Wait until stack is not full
+        std::unique_lock lock{mtx};
+        cv.wait(lock, [this]                  // Ska ej med
+                { return !this->isfull(); }); // Ska ej med
+
         top++;
-        array[top] = item; // Add item to the stack
+        array[top] = item;
+
         lock.unlock();
-        cv.notify_all(); // Notify waiting threads
+        cv.notify_all();
     }
 
-    // Pop operation to remove and return the top item from the stack
-    T pop()
+    T pop(void) // Behåll pop-funktionen
     {
-        std::unique_lock lock(mtx);
+        std::unique_lock lock{mtx};
         cv.wait(lock, [this]
-                { return !this->isempty(); }); // Wait until stack is not empty
-        T item{array[top]};                    // Get top item from the stack
-        top--;                                 // Decrement top index
+                { return !this->sempty(); });
+
+        T item{array[top]};
+        top--;
+
         lock.unlock();
-        cv.notify_all(); // Notify waiting threads
-        return item;     // Return the popped item
+        cv.notify_all();
+
+        return item;
     }
 };
 

@@ -45,106 +45,149 @@ To get VG(väl godkänd), all the above requirements shall be fulfilled and the 
 #include <ctime>
 #include <queue>
 
-#define capacity 8
+#define capacity 8 // Define a constant capacity value as 8
 
-class Warehouse
-{
-private:
-    std::mutex mtx;
-    std::queue<Vehicle *> buffer;
-    int _capacity;
-    int count;
-    std::condition_variable warehouseEmpty;
-    std::condition_variable warehouseFull;
-};
-
+// Base class for vehicles
 class Vehicle
 {
 protected:
-    int id;
-    std::string model;
-    std::string type;
+    int id;            // Unique identifier for the vehicle
+    static int serial; // Static variable to keep track of vehicle ID
+    std::string model; // Model of the vehicle
+    std::string type;  // Type of the vehicle(Car or truck)
 
 public:
-    Vehicle(int id, const std::string &model, const std::string &type) : id(id), model(model), type(type) {}
-
-    virtual void printProperties()
+    Vehicle(const std::string &model, const std::string &type) : model(model), type(type) // Contructor to initialize vehicles properties
     {
-        std::cout << "ID: " << id << ", Model: " << model << ", Type: " << type << std::endl;
+        id = ++serial; // Increment the serial number and assign it as the vehicle ID
+    }
+
+    virtual void printProperties() const // Virtual function to print vehicle properties (to be overridden by dervied classes)
+    {
+        std::cout << "ID: " << id << ", Model: " << model << ", Type: " << type << std::endl; // Output vehicle properties
     }
 };
 
-class Truck : public Vehicle
+class Truck : public Vehicle // Derived class Truck inheriting from base class Vehicle
 {
 private:
-    int maximum_loadWeight;
+    int maximum_loadWeight; // Maximum load weight of the truck
 
 public:
-    Truck(int id, const std::string &model, int maximum_loadWeight) : Vehicle(id, model, "truck"), maximum_loadWeight(maximum_loadWeight) {}
-};
-
-class Car : public Vehicle
-{
-private:
-    int maximum_of_passengers;
-
-public:
-    Car(int id, const std::string &model, int maximum_of_passengers) : Vehicle(id, model, "car"), maximum_of_passengers(maximum_of_passengers) {}
+    Truck(const std::string &model, int maximum_loadWeight) : Vehicle(model, "truck"), maximum_loadWeight(maximum_loadWeight) {} // Constructor to initialize truck properties
 
     void printProperties() const override
     {
-        std::cout << "ID: " << id << ", Model: " << model << ", Type: Car, Max Passengers: " << maximum_of_passengers << std::endl;
+        std::cout << "ID: " << id << "\nModel: " << model << "\nType: Truck\nMax Load Weight: " << maximum_loadWeight << "\n"
+                  << std::endl; // Output car properties
     }
 };
 
-// Static mutex for output stream
-static std::mutex omtx;
-
-// Template class for thread-safe
-template <typename T, size_t Capacity>
-class CircularBufferWarehouse
+class Car : public Vehicle // Derived class Car inheriting from base class Vehicle
 {
-    int top[-1];                // Index of the top element(initialized to -1 as it's initially empty)
-    T array[Capacity];          // Array to hold elements
-    std::mutex mtx;             // Mutex for thread safety
-    std::condition_variable cv; // Condition variable for synchronization
-
-    bool isempty() { return ((top + 1) == Capacity); }
-
-    bool isfull() { return ((top + 1) == Capacity); }
+private:
+    int maximum_of_passengers; // Maximum number of passengers the car can carry
 
 public:
-    using Type = T;
-    static constexpr size_t cap(Capacity); // Static member function to get the size
+    Car(const std::string &model, int maximum_of_passengers) : Vehicle(model, "car"), maximum_of_passengers(maximum_of_passengers) {} // Constructor to initialize car properties
 
-    // Deleted copy constructor and assignment operator to make the class uncopyable
-    Buffer(const Buffer &) = delete;
-    Buffer &operator=(const Buffer &) = delete;
-
-    void produce(const T &item)
+    void printProperties() const override // Override function to print car properties
     {
-        std::unique_lock<std::mutex> lock(mtx);
-        notFull.wait(lock, [this]()
-                     { return count != Capacity; }); // Wait until buffer is not full
-    }
-    // Consumer function that pops items and prints them
-    template <typename T, size_t SIZE>
-    static void consumer(Stack<T, SIZE> &stack)
-    {
-        std::unique_lock<std::mutex> lock(mtx);
-        notEmpty.wait(lock, [this]()
-                      { return count != 0; });
-        T value;
-        while (true)
-        {
-        }
+        std::cout << "ID: " << id << "\nModel: " << model << "\nType: Car\nMax Passengers: " << maximum_of_passengers << "\n"
+                  << std::endl;
     }
 };
+
+// Static mutex for output stream to prevent mixed output from multiple threads
+static std::mutex omtx;
+
+// Circular buffer warehouse class to manage a fixed-size buffer of vehicles
+class CircularBufferWarehouse
+{
+    int counter{0};                                       // Counter to track the number of elements in the buffer
+    int head{0};                                          // Index of the head of the buffer
+    int tail{0};                                          // Index of the tail of the buffer
+    std::array<std::shared_ptr<Vehicle>, capacity> array; // Array to hold elements
+    std::mutex mtx;                                       // Mutex for thread safety
+    std::condition_variable cv;                           // Condition variable for synchronization
+    size_t cap{capacity};                                 // Capacity of the buffer
+
+public:
+    // Default contructor
+    CircularBufferWarehouse() {}
+
+    // Deleted copy constructor and assignment operator to make the class uncopyable
+    CircularBufferWarehouse(const CircularBufferWarehouse &) = delete;
+    CircularBufferWarehouse &operator=(const CircularBufferWarehouse &) = delete;
+
+    // Function to push a vehicle into the buffer
+    void push(const std::shared_ptr<Vehicle> &item)
+    {
+        // Acquire the lock using unique_lock
+        std::unique_lock lock{mtx};
+        // Wait until the buffer is not full
+        cv.wait(lock, [this]
+                { return counter < cap; });
+
+        counter++;          // Increment the top index
+        array[tail] = item; // Push the item
+        tail++;
+
+        // If tail reaches the end of the buffer, reset it to 0
+        if (tail == cap)
+        {
+            tail = 0;
+        }
+
+        lock.unlock();   // Unlock the mutex
+        cv.notify_all(); // Notify all waiting threads
+    }
+
+    std::shared_ptr<Vehicle> pop() // Function to pop a vehicle from the buffer
+    {
+        std::unique_lock lock{mtx}; // Acquire the lock using unique_lock
+        cv.wait(lock, [this]
+                { return counter > 0; }); // Wait until it's not empty
+
+        std::shared_ptr<Vehicle> item{array[head]}; // Retrieve the top element from the buffer
+
+        counter--; // Decrement the counter
+        head++;    // Increment the head index
+
+        // If head reaches the end of the buffer, reset it to 0
+        if (head == cap)
+        {
+            head = 0;
+        }
+
+        lock.unlock();   // Unlock the mutex
+        cv.notify_all(); // Notify all waiting threads
+
+        return item; // Return the popped item
+    }
+};
+
+// Function for consumer threads to pop vehicles from the warehouse
+void consumers(CircularBufferWarehouse &warehouse)
+{
+    static std::mutex mtx; // Mutex for thread safety in consumer function
+    while (true)
+    {
+        auto vehicle{warehouse.pop()};                                // Pop a vehicle from the warehouse
+        mtx.lock();                                                   // Lock the mutex to print vehicle properties
+        vehicle->printProperties();                                   // Print the properties of the popped vehicle
+        mtx.unlock();                                                 // Unlock the mutex
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000)); // Sleep for 1000 milliseconds to simulate processing time
+    }
+}
+
+int Vehicle::serial{1000}; // Initialize the serial number for vehicles
 
 int main()
 {
     int value;
-    constexpr int CONSUMERS{8}; // Number of consumer threads
+    constexpr int CONSUMERS{8};        // Number of consumer threads
+    CircularBufferWarehouse warehouse; // Create a CircularBufferWarehouse object
 
     std::array<std::thread, CONSUMERS> cthreads; // Array to hold consumer threads
     std::srand(time(nullptr));                   // Seed the random number generator with the current time
@@ -152,14 +195,31 @@ int main()
     // Create consumer threads
     for (int i = 0; i < CONSUMERS; i++)
     {
+        cthreads[i] = std::thread(consumers, std::ref(warehouse));
     }
 
+    // Producer loop to continuosly push vehicles into the warehouse
     while (true)
     {
-        value++;
-        omtx.lock();
-        std::cout << "Produced: " << value << std::endl;
-        omtx.unlock();
+        // Randomly push either a car or a truck into the warehouse
+        if (std::rand() % 2 == 0)
+        {
+            warehouse.push(std::make_shared<Car>("Golf", 5));
+        }
+
+        else
+        {
+            warehouse.push(std::make_shared<Truck>("Vera", 1000));
+        }
+
+        // Sleep for 1000 milliseconds before pushing the next vehicle
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000)); // Producer
+    }
+
+    // Join all consumer threads
+    for (int i = 0; i < CONSUMERS; i++)
+    {
+        cthreads[i].join();
     }
 
     return 0;
