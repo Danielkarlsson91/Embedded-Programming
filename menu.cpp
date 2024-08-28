@@ -1,6 +1,5 @@
 // A list of different kind programs 
 
-
 #include <iostream>
 #include <thread>
 #include <mutex>
